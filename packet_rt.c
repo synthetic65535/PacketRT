@@ -81,7 +81,7 @@ static void putchar(uint8_t data)
 uint8_t packet_rt_send(uint8_t *data, uint32_t size)
 {
 	if ((tx_head != tx_tail) || tx_mutex) return 1; // If transmission buffer is not empty
-  tx_mutex = 1;
+	tx_mutex = 1;
 	for (uint32_t i=0; i<size; i++) tx_packet[i] = data[i]; // Copy data
 	*(uint32_t*)(&tx_packet[size]) = calc_crc32((uint8_t *)&tx_packet, size); // Add CRC32
 	base64_encode((char *)&tx_buff, (char *)&tx_packet, size + 4); // Encode
