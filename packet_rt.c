@@ -54,8 +54,8 @@ void packet_rt_init(UART_HandleTypeDef *_huart, packet_rt_callback_t callback)
 uint8_t packet_rt_send(uint8_t *data, uint32_t size)
 {
 	if (size > MAX_PACKET_SIZE) return 1; // Too many data
+    if (tx_head != tx_tail) return 1; // If transmission buffer is not empty
 	if (huart->gState == HAL_UART_STATE_BUSY_TX) return 1; // If transmission is in progress
-	if ((tx_head != tx_tail) || tx_mutex) return 1; // If transmission buffer is not empty
 	if (xSemaphoreTake(tx_mutex, (TickType_t)10) != pdTRUE) return 1; // Try take mutex
 	for (uint32_t i=0; i<size; i++) tx_packet[i] = data[i]; // Copy data
 	*(uint32_t*)(&tx_packet[size]) = calc_crc32((uint8_t *)&tx_packet, size); // Add CRC32
