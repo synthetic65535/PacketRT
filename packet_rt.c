@@ -24,13 +24,13 @@ volatile uint32_t rx_head=0, rx_tail=0;
 volatile uint8_t tx_buff[TX_BUFF_SIZE];
 volatile uint32_t tx_head=0, tx_tail=0;
 // Temp bytes
-volatile uint8_t rx_byte, tx_byte;
+volatile uint8_t rx_byte;
 // Received Packed
 volatile uint8_t rx_packet[MAX_PACKET_SIZE + CRC32_SIZE];
 // Packed to transmit
 volatile uint8_t tx_packet[MAX_PACKET_SIZE + CRC32_SIZE];
 // Transmit Mutex
-volatile uint8_t tx_mutex=0;
+volatile xSemaphoreHandle tx_mutex;
 // UART Handle
 UART_HandleTypeDef *huart;
 
@@ -45,49 +45,25 @@ void packet_rt_init(UART_HandleTypeDef *_huart, packet_rt_callback_t callback)
 	rx_head = rx_tail = 0;
 	tx_head = tx_tail = 0;
 	huart = _huart;
+	tx_mutex = xSemaphoreCreateMutex();
 	HAL_UART_Receive_IT(huart, (uint8_t*)&rx_byte, 1);
-}
-
-
-// Send Byte
-static void putchar(uint8_t data)
-{
-	uint32_t tx_head_next = (tx_head + 1) % TX_BUFF_SIZE;
-	if (tx_head_next != tx_tail) // Check if ring buffer is not full
-	{
-		if (tx_head == tx_tail) // If ring buffer was empty
-		{
-			if (huart->gState == HAL_UART_STATE_BUSY_TX) // If transmission is in progress
-			{
-				// Just add a new byte to buffer
-				tx_buff[tx_head++] = data;
-			} else { // If transmitter is free
-				// Try to start transmission
-				tx_byte = data;
-				HAL_UART_Transmit_IT(huart, (uint8_t*)&tx_byte, 1);
-			}
-		} else { // If buffer was not empty
-			// Just add a new byte to buffer
-			tx_buff[tx_head++] = data;
-		}
-	} else { // If buffer is full
-		// Try to start transmission
-		HAL_UART_Transmit_IT(huart, (uint8_t*)&tx_byte, 1);
-	}
 }
 
 
 // Send Packet
 uint8_t packet_rt_send(uint8_t *data, uint32_t size)
 {
+	if (size > MAX_PACKET_SIZE) return 1; // Too many data
+	if (huart->gState == HAL_UART_STATE_BUSY_TX) return 1; // If transmission is in progress
 	if ((tx_head != tx_tail) || tx_mutex) return 1; // If transmission buffer is not empty
-	tx_mutex = 1;
+	if (xSemaphoreTake(tx_mutex, (TickType_t)10) != pdTRUE) return 1; // Try take mutex
 	for (uint32_t i=0; i<size; i++) tx_packet[i] = data[i]; // Copy data
 	*(uint32_t*)(&tx_packet[size]) = calc_crc32((uint8_t *)&tx_packet, size); // Add CRC32
-	base64_encode((char *)&tx_buff, (char *)&tx_packet, size + 4); // Encode
-	for (uint32_t i=0; i<size+4; i++) putchar(tx_packet[i]); // Transmit
-	putchar(PACKET_DELIMITER); // Send packet delimiter
-	tx_mutex = 0;
+	tx_head = base64_encode((char *)&tx_buff, (char *)&tx_packet, size + 4); // Encode
+	tx_buff[tx_head++] = PACKET_DELIMITER; // Add packet delimiter 
+	tx_tail = 1; // Continue transmission from second byte
+	HAL_UART_Transmit_IT(huart, (uint8_t*)&(tx_buff[0]), 1); // Start transmission of first byte
+	xSemaphoreGive(tx_mutex); // Release mutex
 	return 0;
 }
 
